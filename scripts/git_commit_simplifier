@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import sys
+import os
+
+# Assurer que le package est dans le path
+package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, package_dir)
+
+# Importer et exécuter la fonction principale
+from git_commit_simplifier.cli import main
+
+if __name__ == "__main__":
+    main()

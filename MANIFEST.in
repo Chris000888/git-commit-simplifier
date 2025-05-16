@@ -1,0 +1,4 @@
+include scripts/git_commit_simplifier
+include scripts/git-commit-simplifier
+include README.md
+include LICENSE

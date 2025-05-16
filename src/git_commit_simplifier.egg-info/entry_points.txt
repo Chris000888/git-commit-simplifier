@@ -1,0 +1,5 @@
+[console_scripts]
+gcs = git_commit_simplifier.cli:main
+git-commit-simplifier = git_commit_simplifier.cli:main
+git_commit_simplifier = git_commit_simplifier.cli:main
+gitcommitsimplifier = git_commit_simplifier.cli:main
