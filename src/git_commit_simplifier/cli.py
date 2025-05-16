@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Module principal pour l'interface en ligne de commande de Git Commit Simplifier.
+Main module for Git Commit Simplifier command line interface.
 """
 
 import os
 import sys
 import json
 import click
+import gitdb
 from typing import Dict, List, Tuple, Optional, Set, Any
 from pathlib import Path
 import git
@@ -29,25 +30,25 @@ init(autoreset=True)
 
 def get_repo(path: str = ".") -> Repo:
     """
-    Obtient le dépôt Git à partir du chemin spécifié.
+    Get the Git repository from the specified path.
     """
     try:
         return Repo(path)
     except git.exc.InvalidGitRepositoryError:
-        click.echo(f"{Fore.RED}Le chemin spécifié n'est pas un dépôt Git valide.{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}The specified path is not a valid Git repository.{Style.RESET_ALL}")
         sys.exit(1)
     except git.exc.NoSuchPathError:
-        click.echo(f"{Fore.RED}Le chemin spécifié n'existe pas.{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}The specified path does not exist.{Style.RESET_ALL}")
         sys.exit(1)
 
 def get_staged_files(repo: Repo) -> List[Diff]:
     """
-    Obtient la liste des fichiers en staging dans le dépôt.
+    Get the list of staged files in the repository.
     """
     try:
         staged_diffs = []
         
-        # Vérifier si HEAD existe (si au moins un commit a été effectué)
+        # Check if HEAD exists (if at least one commit has been made)
         has_head = True
         try:
             repo.head.commit
@@ -55,22 +56,22 @@ def get_staged_files(repo: Repo) -> List[Diff]:
             has_head = False
         
         if has_head:
-            # Obtenir les différences entre l'index et HEAD
+            # Get differences between index and HEAD
             diffs = repo.index.diff("HEAD")
             
-            # Filtrer pour ne garder que les fichiers en staging
+            # Filter to keep only staged files
             staged_diffs = [d for d in diffs if d.a_path]
         
-        # Si aucun fichier n'est en staging ou si HEAD n'existe pas, vérifier les nouveaux fichiers
+        # If no files are staged or if HEAD doesn't exist, check new files
         if not staged_diffs:
-            # Obtenir les fichiers non suivis mais ajoutés à l'index
+            # Get untracked files but added to index
             staged_diffs = list(repo.index.diff(None))
             
-            # Si c'est un nouveau dépôt, ajouter tous les fichiers en staging
+            # If it's a new repository, add all staged files
             if not has_head and not staged_diffs:
-                # Pour un nouveau dépôt, tous les fichiers dans l'index sont considérés comme "staged"
+                # For a new repository, all files in the index are considered "staged"
                 for entry in repo.index.entries:
-                    # Créer un diff simulé pour chaque fichier dans l'index
+                    # Create a simulated diff for each file in the index
                     path = entry[0][0].decode('utf-8') if isinstance(entry[0][0], bytes) else entry[0][0]
                     diff = Diff(repo, 
                                 a_path=path,
@@ -83,12 +84,12 @@ def get_staged_files(repo: Repo) -> List[Diff]:
         return staged_diffs
     
     except git.exc.GitCommandError as e:
-        click.echo(f"{Fore.RED}Erreur lors de la récupération des fichiers en staging: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error while retrieving staged files: {e}{Style.RESET_ALL}")
         return []
 
 def categorize_file(file_path: str, config: Dict[str, Any]) -> str:
     """
-    Catégorise un fichier en fonction de son chemin et de son extension.
+    Categorize a file based on its path and extension.
     """
     import re
     
@@ -97,7 +98,7 @@ def categorize_file(file_path: str, config: Dict[str, Any]) -> str:
             if re.search(pattern, file_path, re.IGNORECASE):
                 return category
     
-    # Catégorie par défaut basée sur l'extension
+    # Default category based on extension
     ext = os.path.splitext(file_path)[1].lower()
     if ext in [".py", ".pyw"]:
         return "python"
@@ -122,7 +123,7 @@ def categorize_file(file_path: str, config: Dict[str, Any]) -> str:
 
 def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
     """
-    Analyse le contenu d'un diff pour déterminer la nature des changements.
+    Analyze the content of a diff to determine the nature of changes.
     """
     try:
         diff_content = diff.diff.decode('utf-8')
@@ -131,24 +132,24 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
     
     details = []
     
-    # Compter les lignes ajoutées et supprimées
+    # Count added and removed lines
     added_lines = [line for line in diff_content.split('\n') if line.startswith('+') and not line.startswith('+++')]
     removed_lines = [line for line in diff_content.split('\n') if line.startswith('-') and not line.startswith('---')]
     
-    # Détecter les changements de style (espaces, indentation, etc.)
+    # Detect style changes (spaces, indentation, etc.)
     whitespace_only = True
     if added_lines or removed_lines:
         for line in added_lines + removed_lines:
-            # Ignorer les lignes qui commencent par +++ ou ---
+            # Ignore lines that start with +++ or ---
             if line.startswith('+++') or line.startswith('---'):
                 continue
-            # Enlever le + ou - au début
+            # Remove + or - at the beginning
             code_line = line[1:] if line else ''
-            # Vérifier si la ligne contient autre chose que des espaces
+            # Check if the line contains anything other than spaces
             stripped_line = code_line.strip()
             if stripped_line:
-                # Si la différence entre la ligne avec et sans espaces est significative,
-                # alors ce n'est pas seulement un changement d'espaces
+                # If the difference between the line with and without spaces is significant,
+                # then it's not just a space change
                 if len(code_line) - len(stripped_line) < len(code_line) * 0.9:
                     whitespace_only = False
                     break
@@ -156,22 +157,22 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
     if whitespace_only and (added_lines or removed_lines):
         return 'style', ['whitespace changes']
     
-    # Détecter les nouveaux fichiers
+    # Detect new files
     if diff.new_file:
         details.append("new file")
         return 'feat', details
     
-    # Détecter les fichiers supprimés
+    # Detect deleted files
     if diff.deleted_file:
         details.append("file deletion")
         return 'chore', details
     
-    # Détecter les changements de nom
+    # Detect renamed files
     if diff.renamed:
         details.append("file rename")
         return 'refactor', details
     
-    # Analyser le contenu pour déterminer le type de changement
+    # Analyze content to determine change type
     if "fix" in diff_content.lower() or "bug" in diff_content.lower() or "issue" in diff_content.lower():
         details.append("bug fix")
         return 'fix', details
@@ -188,7 +189,7 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
         details.append("documentation changes")
         return 'docs', details
     
-    # Détecter les changements de dépendances
+    # Detect dependency changes
     if "import" in diff_content.lower() or "require" in diff_content.lower() or "dependency" in diff_content.lower():
         details.append("dependency changes")
         if "add" in diff_content.lower() or any(line.startswith('+') for line in diff_content.split('\n') if "import" in line.lower() or "require" in line.lower()):
@@ -196,7 +197,7 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
         else:
             return 'chore', details
     
-    # Détecter les changements de fonction
+    # Detect function changes
     if "def " in diff_content.lower() or "function" in diff_content.lower() or "class" in diff_content.lower():
         details.append("function definition changes")
         if any(line.startswith('+') for line in diff_content.split('\n') if "def " in line.lower() or "function" in line.lower() or "class" in line.lower()):
@@ -204,7 +205,7 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
         else:
             return 'refactor', details
     
-    # Par défaut, considérer comme une mise à jour
+    # Default, consider as an update
     details.append("code changes")
     return 'chore', details
 
@@ -214,30 +215,30 @@ def generate_commit_message(
     use_emoji: bool = False
 ) -> str:
     """
-    Génère un message de commit en fonction des fichiers en staging.
+    Generate a commit message based on staged files.
     """
     if not staged_files:
         return "No changes to commit"
     
-    # Regrouper les fichiers par catégorie
+    # Group files by category
     files_by_category: Dict[str, List[Tuple[str, str, List[str]]]] = {}
     for file_path, category, change_type, details in staged_files:
         if category not in files_by_category:
             files_by_category[category] = []
         files_by_category[category].append((file_path, change_type, details))
     
-    # Déterminer le type de changement principal
+    # Determine primary change type
     change_types = [change_type for _, _, change_type, _ in staged_files]
     primary_change_type = max(set(change_types), key=change_types.count)
     
-    # Déterminer la catégorie principale
+    # Determine primary category
     categories = [category for _, category, _, _ in staged_files]
     primary_category = max(set(categories), key=categories.count)
     
-    # Générer un résumé des changements
+    # Generate summary of changes
     summary = generate_summary(staged_files)
     
-    # Ajouter un emoji si demandé
+    # Add emoji if requested
     emoji_prefix = ""
     if use_emoji:
         emoji_map = {
@@ -251,7 +252,7 @@ def generate_commit_message(
         }
         emoji_prefix = f"{emoji_map.get(primary_change_type, '🔧')} "
     
-    # Générer le message selon le style demandé
+    # Generate message based on requested style
     if style == "conventional":
         # Format: type(scope): description
         message = f"{primary_change_type}({primary_category}): {emoji_prefix}{summary}\n\n"
@@ -262,12 +263,12 @@ def generate_commit_message(
         # Format: Description with details
         message = f"{emoji_prefix}{summary}\n\n"
     
-    # Ajouter les détails pour le style détaillé et conventionnel
+    # Add details for detailed and conventional styles
     if style != "simple":
         for category, files in files_by_category.items():
             message += f"## {category}\n"
             for file_path, change_type, details in files:
-                # Traduire le type de changement en anglais
+                # Translate change type to English
                 change_type_map = {
                     'feat': 'Add',
                     'fix': 'Fix',
@@ -287,17 +288,17 @@ def generate_commit_message(
 
 def generate_summary(staged_files: List[Tuple[str, str, str, List[str]]]) -> str:
     """
-    Génère un résumé des changements pour le message de commit.
+    Generate a summary of changes for the commit message.
     """
-    # Extraire les types de changements et les catégories
+    # Extract change types and categories
     change_types = [change_type for _, _, change_type, _ in staged_files]
     categories = [category for _, category, _, _ in staged_files]
     
-    # Déterminer le type de changement principal et la catégorie principale
+    # Determine primary change type and primary category
     primary_change_type = max(set(change_types), key=change_types.count)
     primary_category = max(set(categories), key=categories.count)
     
-    # Générer un résumé en fonction du type de changement principal (en anglais)
+    # Generate summary based on primary change type (in English)
     if primary_change_type == 'feat':
         action = "Add"
     elif primary_change_type == 'fix':
@@ -313,7 +314,7 @@ def generate_summary(staged_files: List[Tuple[str, str, str, List[str]]]) -> str
     else:  # chore or other
         action = "Update"
     
-    # Générer un résumé en fonction de la catégorie principale (en anglais)
+    # Generate summary based on primary category (in English)
     if primary_category == 'python':
         component = "Python code"
     elif primary_category == 'javascript':
@@ -335,13 +336,13 @@ def generate_summary(staged_files: List[Tuple[str, str, str, List[str]]]) -> str
     else:
         component = "files"
     
-    # Si tous les fichiers sont dans le même répertoire, utiliser ce répertoire comme composant
+    # If all files are in the same directory, use that directory as component
     file_paths = [file_path for file_path, _, _, _ in staged_files]
     common_dir = os.path.commonpath(file_paths) if len(file_paths) > 1 else os.path.dirname(file_paths[0])
     if common_dir and common_dir != "." and common_dir != "":
         component = common_dir
     
-    # Si c'est un changement de style pour des espaces, être plus spécifique (en anglais)
+    # If it's a style change for spaces, be more specific (in English)
     if primary_change_type == 'style':
         details = [detail for _, _, _, file_details in staged_files for detail in file_details]
         if 'whitespace changes' in details:
@@ -351,152 +352,152 @@ def generate_summary(staged_files: List[Tuple[str, str, str, List[str]]]) -> str
 
 def preview_changes(repo: Repo) -> None:
     """
-    Affiche un aperçu des changements en staging.
+    Display a preview of staged changes.
     """
     try:
-        # Utiliser git diff --cached pour voir les changements en staging
+        # Use git diff --cached to see staged changes
         diff = repo.git.diff("--cached", color="always")
         if diff:
-            click.echo(f"\n{Fore.CYAN}Aperçu des changements en staging:{Style.RESET_ALL}")
+            click.echo(f"\n{Fore.CYAN}Preview of staged changes:{Style.RESET_ALL}")
             click.echo(diff)
         else:
-            click.echo(f"\n{Fore.YELLOW}Aucun changement en staging.{Style.RESET_ALL}")
+            click.echo(f"\n{Fore.YELLOW}No staged changes.{Style.RESET_ALL}")
     except git.exc.GitCommandError as e:
-        click.echo(f"{Fore.RED}Erreur lors de l'aperçu des changements: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error while previewing changes: {e}{Style.RESET_ALL}")
 
 def interactive_staging(repo: Repo) -> None:
     """
-    Mode interactif pour sélectionner les fichiers à mettre en staging.
+    Interactive mode for selecting files to stage.
     """
     try:
-        # Obtenir la liste des fichiers modifiés mais pas encore en staging
+        # Get list of modified but not yet staged files
         unstaged_files = [
             item.a_path
             for item in repo.index.diff(None)
         ]
         
-        # Ajouter les fichiers non suivis
+        # Add untracked files
         untracked_files = repo.untracked_files
         all_files = unstaged_files + untracked_files
         
         if not all_files:
-            click.echo(f"{Fore.YELLOW}Aucun fichier à mettre en staging.{Style.RESET_ALL}")
+            click.echo(f"{Fore.YELLOW}No files to stage.{Style.RESET_ALL}")
             return
         
-        # Afficher un dialogue pour sélectionner les fichiers
+        # Display a dialog to select files
         result = checkboxlist_dialog(
-            title="Sélectionnez les fichiers à mettre en staging",
-            text="Utilisez la barre d'espace pour sélectionner/désélectionner les fichiers",
+            title="Select files to stage",
+            text="Use spacebar to select/deselect files",
             values=[(file, file) for file in all_files]
         ).run()
         
         if result:
-            # Mettre en staging les fichiers sélectionnés
+            # Stage selected files
             repo.git.add(*result)
-            click.echo(f"{Fore.GREEN}Fichiers ajoutés au staging: {', '.join(result)}{Style.RESET_ALL}")
+            click.echo(f"{Fore.GREEN}Files added to staging: {', '.join(result)}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.YELLOW}Aucun fichier sélectionné.{Style.RESET_ALL}")
+            click.echo(f"{Fore.YELLOW}No files selected.{Style.RESET_ALL}")
     
     except git.exc.GitCommandError as e:
-        click.echo(f"{Fore.RED}Erreur lors du staging interactif: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error during interactive staging: {e}{Style.RESET_ALL}")
 
 def commit_changes(repo: Repo, message: str, edit: bool = True) -> bool:
     """
-    Commit les changements avec le message spécifié.
+    Commit changes with the specified message.
     """
     try:
         if edit:
-            # Écrire le message dans un fichier temporaire
+            # Write message to temporary file
             temp_file = os.path.join(repo.git_dir, "COMMIT_EDITMSG")
             with open(temp_file, "w") as f:
                 f.write(message)
             
-            # Ouvrir l'éditeur pour modifier le message
-            click.echo(f"{Fore.CYAN}Ouverture de l'éditeur pour modifier le message de commit...{Style.RESET_ALL}")
+            # Open editor to modify message
+            click.echo(f"{Fore.CYAN}Opening editor to modify commit message...{Style.RESET_ALL}")
             editor = os.environ.get("EDITOR", "vim")
             os.system(f"{editor} {temp_file}")
             
-            # Lire le message modifié
+            # Read modified message
             with open(temp_file, "r") as f:
                 edited_message = f.read()
             
-            # Vérifier si le message a été modifié
+            # Check if message was modified
             if edited_message.strip() == "":
-                click.echo(f"{Fore.YELLOW}Commit annulé: message vide.{Style.RESET_ALL}")
+                click.echo(f"{Fore.YELLOW}Commit cancelled: empty message.{Style.RESET_ALL}")
                 return False
             
-            # Commit avec le message modifié
+            # Commit with modified message
             repo.git.commit("-m", edited_message)
         else:
-            # Commit directement avec le message généré
+            # Commit directly with generated message
             repo.git.commit("-m", message)
         
-        click.echo(f"{Fore.GREEN}Changements commités avec succès!{Style.RESET_ALL}")
+        click.echo(f"{Fore.GREEN}Changes committed successfully!{Style.RESET_ALL}")
         return True
     
     except git.exc.GitCommandError as e:
-        click.echo(f"{Fore.RED}Erreur lors du commit: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error during commit: {e}{Style.RESET_ALL}")
         return False
 
 def push_changes(repo: Repo) -> bool:
     """
-    Pousse les changements vers le dépôt distant.
+    Push changes to remote repository.
     """
     try:
-        # Vérifier s'il y a un dépôt distant configuré
+        # Check if remote repository is configured
         if not repo.remotes:
-            click.echo(f"{Fore.YELLOW}Aucun dépôt distant configuré.{Style.RESET_ALL}")
+            click.echo(f"{Fore.YELLOW}No remote repository configured.{Style.RESET_ALL}")
             return False
         
-        # Pousser les changements
+        # Push changes
         remote = repo.remotes[0]
         remote.push()
         
-        click.echo(f"{Fore.GREEN}Changements poussés avec succès vers {remote.name}!{Style.RESET_ALL}")
+        click.echo(f"{Fore.GREEN}Changes pushed successfully to {remote.name}!{Style.RESET_ALL}")
         return True
     
     except git.exc.GitCommandError as e:
-        click.echo(f"{Fore.RED}Erreur lors du push: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error during push: {e}{Style.RESET_ALL}")
         return False
 
 @click.group(invoke_without_command=True)
-@click.option("--path", default=".", help="Chemin vers le dépôt Git")
-@click.option("--preview/--no-preview", default=True, help="Aperçu des changements avant de commiter")
-@click.option("--edit/--no-edit", default=True, help="Éditer le message de commit avant de commiter")
-@click.option("--push/--no-push", default=False, help="Pousser les changements après le commit")
-@click.option("--style", type=click.Choice(["detailed", "conventional", "simple"]), default="detailed", help="Style du message de commit")
-@click.option("--emoji/--no-emoji", default=False, help="Utiliser des emoji dans les messages de commit")
-@click.option("--interactive/--no-interactive", default=False, help="Utiliser le mode interactif pour le staging")
+@click.option("--path", default=".", help="Path to Git repository")
+@click.option("--preview/--no-preview", default=True, help="Preview changes before committing")
+@click.option("--edit/--no-edit", default=True, help="Edit commit message before committing")
+@click.option("--push/--no-push", default=False, help="Push changes after commit")
+@click.option("--style", type=click.Choice(["detailed", "conventional", "simple"]), default="detailed", help="Commit message style")
+@click.option("--emoji/--no-emoji", default=False, help="Use emoji in commit messages")
+@click.option("--interactive/--no-interactive", default=False, help="Use interactive mode for staging")
 @click.version_option()
 @click.pass_context
 def main(ctx, path, preview, edit, push, style, emoji, interactive):
     """
-    Git Commit Simplifier - Un outil pour simplifier la création de messages de commit Git.
+    Git Commit Simplifier - A tool to simplify Git commit message creation.
     """
     if ctx.invoked_subcommand is None:
-        # Charger la configuration
+        # Load configuration
         config = load_config()
         
-        # Les options de ligne de commande ont priorité sur la configuration
+        # Command line options take precedence over configuration
         style = style or config.get("style", "detailed")
         emoji = emoji if emoji is not None else config.get("emoji", False)
         push = push if push is not None else config.get("auto_push", False)
         
-        # Obtenir le dépôt Git
+        # Get Git repository
         repo = get_repo(path)
         
-        # Mode interactif pour le staging si demandé
+        # Interactive staging mode if requested
         if interactive:
             interactive_staging(repo)
         
-        # Obtenir les fichiers en staging
+        # Get staged files
         staged_diffs = get_staged_files(repo)
         
         if not staged_diffs:
-            click.echo(f"{Fore.YELLOW}Aucun changement en staging. Utilisez 'git add' pour ajouter des fichiers.{Style.RESET_ALL}")
+            click.echo(f"{Fore.YELLOW}No staged changes. Use 'git add' to add files.{Style.RESET_ALL}")
             return
         
-        # Analyser les fichiers en staging
+        # Analyze staged files
         staged_files = []
         for diff in staged_diffs:
             file_path = diff.a_path or diff.b_path
@@ -504,37 +505,37 @@ def main(ctx, path, preview, edit, push, style, emoji, interactive):
             change_type, details = analyze_diff_content(diff)
             staged_files.append((file_path, category, change_type, details))
         
-        # Afficher un aperçu des changements si demandé
+        # Preview changes if requested
         if preview:
             preview_changes(repo)
         
-        # Générer le message de commit
+        # Generate commit message
         commit_message = generate_commit_message(staged_files, style, emoji)
         
-        # Afficher le message de commit généré
-        click.echo(f"\n{Fore.CYAN}Message de commit généré:{Style.RESET_ALL}")
+        # Display generated commit message
+        click.echo(f"\n{Fore.CYAN}Generated commit message:{Style.RESET_ALL}")
         click.echo(f"{Fore.GREEN}{commit_message}{Style.RESET_ALL}")
         
-        # Demander confirmation
-        if click.confirm(f"\n{Fore.CYAN}Voulez-vous commiter ces changements?{Style.RESET_ALL}", default=True):
-            # Commiter les changements
+        # Ask for confirmation
+        if click.confirm(f"\n{Fore.CYAN}Do you want to commit these changes?{Style.RESET_ALL}", default=True):
+            # Commit changes
             if commit_changes(repo, commit_message, edit):
-                # Pousser les changements si demandé
+                # Push changes if requested
                 if push:
                     push_changes(repo)
 
 @main.command()
-@click.option("--style", type=click.Choice(["detailed", "conventional", "simple"]), help="Style du message de commit")
-@click.option("--emoji/--no-emoji", help="Utiliser des emoji dans les messages de commit")
-@click.option("--auto-push/--no-auto-push", help="Pousser automatiquement les changements après le commit")
+@click.option("--style", type=click.Choice(["detailed", "conventional", "simple"]), help="Commit message style")
+@click.option("--emoji/--no-emoji", help="Use emoji in commit messages")
+@click.option("--auto-push/--no-auto-push", help="Automatically push changes after commit")
 def config(style, emoji, auto_push):
     """
-    Configurer Git Commit Simplifier.
+    Configure Git Commit Simplifier.
     """
-    # Charger la configuration existante
+    # Load existing configuration
     config = load_config()
     
-    # Mettre à jour la configuration avec les nouvelles valeurs
+    # Update configuration with new values
     if style is not None:
         config["style"] = style
     if emoji is not None:
@@ -542,11 +543,11 @@ def config(style, emoji, auto_push):
     if auto_push is not None:
         config["auto_push"] = auto_push
     
-    # Enregistrer la configuration
+    # Save configuration
     save_config(config)
     
-    # Afficher la configuration actuelle
-    click.echo(f"{Fore.GREEN}Configuration enregistrée:{Style.RESET_ALL}")
+    # Display current configuration
+    click.echo(f"{Fore.GREEN}Configuration saved:{Style.RESET_ALL}")
     click.echo(json.dumps(config, indent=2))
 
 if __name__ == "__main__":
