@@ -195,7 +195,7 @@ def analyze_diff_content(diff: Diff) -> Tuple[str, List[str]]:
         if "add" in diff_content.lower() or any(line.startswith('+') for line in diff_content.split('\n') if "import" in line.lower() or "require" in line.lower()):
             return 'feat', details
         else:
-            return 'chore', details
+            return 'chore', details 
     
     # Detect function changes
     if "def " in diff_content.lower() or "function" in diff_content.lower() or "class" in diff_content.lower():
